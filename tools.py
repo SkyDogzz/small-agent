@@ -23,6 +23,8 @@ LISTING_HIDDEN_FILES = {
     "Thumbs.db",
 }
 
+RUN_SHELL_CONFIRMATION_HANDLER = None
+
 
 def truncate(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
     if len(text) <= limit:
@@ -415,6 +417,32 @@ def command_is_blocked(command: str) -> str | None:
     return None
 
 
+def command_requires_confirmation(command: str) -> str | None:
+    lowered = command.lower().strip()
+
+    confirmation_patterns = [
+        (r"(^|\s)(make|cmake --build|ninja|ctest|cargo test|go test|pytest|python -m pytest|npm test|npm run test|yarn test|pnpm test|mvn test|gradle test|dotnet test)(\s|$)", "build or test command"),
+        (r"(^|\s)(npm install|yarn install|pnpm install|pip install|python -m pip install|poetry add|uv pip install|bundle install)(\s|$)", "dependency install command"),
+        (r"(^|\s)(touch|cp|mv|mkdir|sed -i|perl -pi|tee|chmod|chown|truncate)(\s|$)", "file-modifying command"),
+        (r"(>>|>|tee\s+[^|]+$)", "shell redirection that can write files"),
+    ]
+
+    for pattern, reason in confirmation_patterns:
+        if re.search(pattern, lowered):
+            return reason
+
+    return None
+
+
+def set_run_shell_confirmation_handler(handler) -> None:
+    """Set a callback used to confirm risky shell commands.
+
+    The callback should accept (command: str, reason: str) and return bool.
+    """
+    global RUN_SHELL_CONFIRMATION_HANDLER
+    RUN_SHELL_CONFIRMATION_HANDLER = handler
+
+
 def run_shell(command: str) -> str:
     """Run a shell command.
 
@@ -424,6 +452,18 @@ def run_shell(command: str) -> str:
     blocked = command_is_blocked(command)
     if blocked:
         return f"Blocked potentially dangerous command containing: {blocked}"
+
+    reason = command_requires_confirmation(command)
+    if reason:
+        if RUN_SHELL_CONFIRMATION_HANDLER is None:
+            return (
+                "Confirmation required before running shell command "
+                f"({reason}): {command}"
+            )
+
+        approved = RUN_SHELL_CONFIRMATION_HANDLER(command, reason)
+        if not approved:
+            return f"Command cancelled: {command}"
 
     try:
         result = subprocess.run(
