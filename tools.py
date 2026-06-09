@@ -496,6 +496,28 @@ def run_shell(command: str) -> str:
         return f"Error: {e}"
 
 
+def rg_exclude_globs() -> list[str]:
+    globs = []
+
+    for name in sorted(LISTING_HIDDEN_NAMES):
+        globs.append(f"!**/{name}")
+        globs.append(f"!**/{name}/**")
+
+    for name in sorted(LISTING_HIDDEN_FILES):
+        globs.append(f"!**/{name}")
+
+    return globs
+
+
+def run_rg(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["rg", *args],
+        text=True,
+        capture_output=True,
+        cwd=cwd or WORKSPACE,
+    )
+
+
 def git_status() -> str:
     """Show git status."""
     return run_shell("git status --short")
@@ -518,35 +540,24 @@ def grep_code(pattern: str, path: str = ".") -> str:
         if not safe_target.exists():
             return f"Path does not exist: {safe_target}"
 
-        if safe_target.is_file():
-            ignored = git_ignored_paths([safe_target])
-            if ignored == {workspace_relative_path(safe_target)}:
-                return f"No matches found for pattern: {pattern}"
+        target = workspace_relative_path(safe_target)
+        result = run_rg(
+            [
+                "--line-number",
+                "--no-heading",
+                "--color",
+                "never",
+                *rg_exclude_globs(),
+                pattern,
+                target,
+            ]
+        )
 
-        regex = re.compile(pattern)
-        matches = []
+        if result.returncode not in {0, 1}:
+            error_text = result.stderr.strip() or result.stdout.strip()
+            return f"Error: {error_text or 'rg search failed.'}"
 
-        if safe_target.is_file():
-            candidates = [safe_target]
-        else:
-            candidates = iter_visible_files(safe_target)
-
-        for file_path in candidates:
-            try:
-                text = file_path.read_text(errors="replace")
-            except Exception:
-                continue
-
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if regex.search(line):
-                    matches.append(
-                        f"{file_path.relative_to(WORKSPACE)}:{lineno}:{line}"
-                    )
-                    if len(matches) >= 200:
-                        break
-
-            if len(matches) >= 200:
-                break
+        matches = [line for line in result.stdout.splitlines() if line.strip()]
 
         if not matches:
             return f"No matches found for pattern: {pattern}"
@@ -554,7 +565,7 @@ def grep_code(pattern: str, path: str = ".") -> str:
         if len(matches) >= 200:
             matches.append("[Stopped after 200 matches.]")
 
-        return truncate("\n".join(matches))
+        return truncate("\n".join(matches[:201]))
 
     except Exception as e:
         return f"Error: {e}"
@@ -575,15 +586,23 @@ def find_files(name_pattern: str = "*", path: str = ".") -> str:
         if not p.is_dir():
             return f"Path is not a directory: {p}"
 
-        matches = []
-        for item in p.rglob(name_pattern):
-            if any(part in LISTING_HIDDEN_NAMES for part in item.parts):
-                continue
-            if item.name in LISTING_HIDDEN_FILES:
-                continue
-            matches.append(item)
+        result = run_rg(
+            [
+                "--files",
+                "--color",
+                "never",
+                *rg_exclude_globs(),
+                "-g",
+                name_pattern,
+                workspace_relative_path(p),
+            ]
+        )
 
-        matches = visible_listing_entries(matches)
+        if result.returncode not in {0, 1}:
+            error_text = result.stderr.strip() or result.stdout.strip()
+            return f"Error: {error_text or 'rg file search failed.'}"
+
+        matches = [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
         if len(matches) > 200:
             matches = matches[:200]
@@ -593,8 +612,7 @@ def find_files(name_pattern: str = "*", path: str = ".") -> str:
 
         lines = [f"Files matching {name_pattern!r} under {p}:"]
         for item in matches:
-            kind = "DIR " if item.is_dir() else "FILE"
-            lines.append(f"[{kind}] {item.relative_to(WORKSPACE)}")
+            lines.append(f"[FILE] {item}")
 
         if len(matches) >= 200:
             lines.append("[Stopped after 200 matches.]")
