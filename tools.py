@@ -1,6 +1,7 @@
 import re
 import shlex
 import subprocess
+from difflib import unified_diff
 from pathlib import Path
 
 from config import MAX_FILE_READ_BYTES, MAX_TOOL_OUTPUT_CHARS, WORKSPACE
@@ -248,6 +249,51 @@ def write_file(path: str, content: str) -> str:
         p.write_text(content)
 
         return f"Wrote file: {p}"
+
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def diff_file(path: str, content: str) -> str:
+    """Show a unified diff for a proposed file change without writing it.
+
+    Args:
+        path: Path to the file.
+        content: Proposed file content.
+    """
+    try:
+        p = safe_path(path)
+
+        if is_secret_like_path(p):
+            return f"Refusing to diff possible secret file: {p.name}."
+
+        if p.exists() and not p.is_file():
+            return f"Path is not a file: {p}"
+
+        if p.exists():
+            before = p.read_text(errors="replace").splitlines(keepends=True)
+            from_file = str(p.relative_to(WORKSPACE))
+        else:
+            before = []
+            from_file = f"a/{p.relative_to(WORKSPACE)}"
+
+        after = content.splitlines(keepends=True)
+        to_file = f"b/{p.relative_to(WORKSPACE)}"
+
+        diff = "".join(
+            unified_diff(
+                before,
+                after,
+                fromfile=from_file,
+                tofile=to_file,
+                lineterm="",
+            )
+        )
+
+        if not diff.strip():
+            return f"No changes for: {p}"
+
+        return truncate(diff)
 
     except Exception as e:
         return f"Error: {e}"
@@ -560,6 +606,7 @@ TOOLS = {
     "list_files": list_files,
     "read_file": read_file,
     "write_file": write_file,
+    "diff_file": diff_file,
     "inspect_folder": inspect_folder,
     "run_shell": run_shell,
     "git_status": git_status,
@@ -576,6 +623,7 @@ TOOL_FUNCTIONS = [
     list_files,
     read_file,
     write_file,
+    diff_file,
     inspect_folder,
     run_shell,
     git_status,
