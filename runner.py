@@ -2,12 +2,7 @@ import json
 
 from ollama import ResponseError, chat
 
-from config import (
-    MAX_CONSOLE_TOOL_PREVIEW_CHARS,
-    MAX_TOOL_LOOPS,
-    MODEL,
-    SHOW_TOOL_CALLS,
-)
+import config
 from prompts import SYSTEM_PROMPT
 from tools import TOOL_FUNCTIONS, TOOLS, inspect_folder, read_file, truncate
 
@@ -121,7 +116,7 @@ def update_session_summary() -> None:
 
     try:
         response = chat(
-            model=MODEL,
+            model=config.MODEL,
             messages=summary_prompt,
             stream=False,
         )
@@ -169,10 +164,10 @@ def run_agent(user_prompt: str) -> str:
     total_completion_tokens = 0
     final_text = None
 
-    for step in range(MAX_TOOL_LOOPS):
+    for step in range(config.MAX_TOOL_LOOPS):
         try:
             response = chat(
-                model=MODEL,
+                model=config.MODEL,
                 messages=build_chat_messages(),
                 tools=TOOL_FUNCTIONS,
                 stream=False,
@@ -224,7 +219,7 @@ def run_agent(user_prompt: str) -> str:
             name = function.get("name")
             args = normalize_tool_args(function.get("arguments", {}))
 
-            if SHOW_TOOL_CALLS:
+            if config.SHOW_TOOL_CALLS:
                 print(f"[tool call] {name} {json.dumps(args, ensure_ascii=True)}")
 
             fn = TOOLS.get(name)
@@ -245,10 +240,10 @@ def run_agent(user_prompt: str) -> str:
                 }
             )
 
-            if SHOW_TOOL_CALLS:
+            if config.SHOW_TOOL_CALLS:
                 print(
                     "[tool result] "
-                    f"{truncate(str(result), MAX_CONSOLE_TOOL_PREVIEW_CHARS)}"
+                    f"{truncate(str(result), config.MAX_CONSOLE_TOOL_PREVIEW_CHARS)}"
                 )
 
             messages.append(
@@ -270,7 +265,7 @@ def run_agent(user_prompt: str) -> str:
             text.append(f"Args: {item['args']}")
             text.append("Result:")
             text.append(
-                truncate(item["result"], MAX_CONSOLE_TOOL_PREVIEW_CHARS)
+                truncate(item["result"], config.MAX_CONSOLE_TOOL_PREVIEW_CHARS)
             )
             text.append("")
         update_session_summary()

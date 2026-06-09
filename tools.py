@@ -4,7 +4,7 @@ import subprocess
 from difflib import unified_diff
 from pathlib import Path
 
-from config import MAX_FILE_READ_BYTES, MAX_TOOL_OUTPUT_CHARS, WORKSPACE
+import config
 
 LISTING_HIDDEN_NAMES = {
     ".git",
@@ -26,7 +26,10 @@ LISTING_HIDDEN_FILES = {
 RUN_SHELL_CONFIRMATION_HANDLER = None
 
 
-def truncate(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+def truncate(text: str, limit: int | None = None) -> str:
+    if limit is None:
+        limit = config.MAX_TOOL_OUTPUT_CHARS
+
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n\n[Output truncated to {limit} characters.]"
@@ -34,7 +37,7 @@ def truncate(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
 
 def safe_path(path: str = ".") -> Path:
     """
-    Resolve a path safely inside WORKSPACE only.
+    Resolve a path safely inside the workspace only.
     """
     if path is None or path.strip() == "":
         path = "."
@@ -44,9 +47,9 @@ def safe_path(path: str = ".") -> Path:
     if raw.is_absolute():
         target = raw.resolve()
     else:
-        target = (WORKSPACE / raw).resolve()
+        target = (config.WORKSPACE / raw).resolve()
 
-    if not str(target).startswith(str(WORKSPACE)):
+    if not str(target).startswith(str(config.WORKSPACE)):
         raise ValueError(f"Access outside workspace is blocked: {target}")
 
     return target
@@ -86,7 +89,7 @@ def is_secret_like_path(path: Path) -> bool:
 
 
 def workspace_relative_path(path: Path) -> str:
-    relative = path.relative_to(WORKSPACE)
+    relative = path.relative_to(config.WORKSPACE)
     relative_text = relative.as_posix()
     return relative_text or "."
 
@@ -97,11 +100,11 @@ def git_ignored_paths(paths: list[Path]) -> set[str] | None:
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(WORKSPACE), "check-ignore", "--stdin"],
+            ["git", "-C", str(config.WORKSPACE), "check-ignore", "--stdin"],
             input="\n".join(workspace_relative_path(path) for path in paths) + "\n",
             text=True,
             capture_output=True,
-            cwd=WORKSPACE,
+            cwd=config.WORKSPACE,
         )
 
         if result.returncode not in {0, 1}:
@@ -221,7 +224,7 @@ def read_file(path: str) -> str:
             )
 
         size = p.stat().st_size
-        if size > MAX_FILE_READ_BYTES:
+        if size > config.MAX_FILE_READ_BYTES:
             return (
                 f"File is too large: {size} bytes. "
                 "Ask for a specific section or implement chunked reading."
@@ -274,13 +277,13 @@ def diff_file(path: str, content: str) -> str:
 
         if p.exists():
             before = p.read_text(errors="replace").splitlines(keepends=True)
-            from_file = str(p.relative_to(WORKSPACE))
+            from_file = str(p.relative_to(config.WORKSPACE))
         else:
             before = []
-            from_file = f"a/{p.relative_to(WORKSPACE)}"
+            from_file = f"a/{p.relative_to(config.WORKSPACE)}"
 
         after = content.splitlines(keepends=True)
-        to_file = f"b/{p.relative_to(WORKSPACE)}"
+        to_file = f"b/{p.relative_to(config.WORKSPACE)}"
 
         diff = "".join(
             unified_diff(
@@ -464,7 +467,7 @@ def execute_shell(command: str, cwd: Path | None = None) -> str:
         result = subprocess.run(
             command,
             shell=True,
-            cwd=cwd or WORKSPACE,
+            cwd=cwd or config.WORKSPACE,
             text=True,
             capture_output=True,
             timeout=20,
@@ -497,7 +500,7 @@ def run_shell(command: str) -> str:
     Args:
         command: Shell command to run.
     """
-    return execute_shell(command, WORKSPACE)
+    return execute_shell(command, config.WORKSPACE)
 
 
 def rg_exclude_globs() -> list[str]:
@@ -518,7 +521,7 @@ def run_rg(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
         ["rg", *args],
         text=True,
         capture_output=True,
-        cwd=cwd or WORKSPACE,
+        cwd=cwd or config.WORKSPACE,
     )
 
 
@@ -696,9 +699,10 @@ def run_pytest(path: str = ".") -> str:
     """
     try:
         safe_target = safe_path(path)
+        cwd = safe_target if safe_target.is_dir() else safe_target.parent
         return execute_shell(
             f"python -m pytest {shlex.quote(str(safe_target))}",
-            safe_target,
+            cwd,
         )
     except Exception as e:
         return f"Error: {e}"
