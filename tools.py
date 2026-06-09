@@ -443,12 +443,7 @@ def set_run_shell_confirmation_handler(handler) -> None:
     RUN_SHELL_CONFIRMATION_HANDLER = handler
 
 
-def run_shell(command: str) -> str:
-    """Run a shell command.
-
-    Args:
-        command: Shell command to run.
-    """
+def execute_shell(command: str, cwd: Path | None = None) -> str:
     blocked = command_is_blocked(command)
     if blocked:
         return f"Blocked potentially dangerous command containing: {blocked}"
@@ -469,7 +464,7 @@ def run_shell(command: str) -> str:
         result = subprocess.run(
             command,
             shell=True,
-            cwd=WORKSPACE,
+            cwd=cwd or WORKSPACE,
             text=True,
             capture_output=True,
             timeout=20,
@@ -494,6 +489,15 @@ def run_shell(command: str) -> str:
         return "Command timed out."
     except Exception as e:
         return f"Error: {e}"
+
+
+def run_shell(command: str) -> str:
+    """Run a shell command in the workspace root.
+
+    Args:
+        command: Shell command to run.
+    """
+    return execute_shell(command, WORKSPACE)
 
 
 def rg_exclude_globs() -> list[str]:
@@ -660,6 +664,73 @@ def python_syntax_check(path: str = ".") -> str:
         return f"Error: {e}"
 
 
+def run_pytest(path: str = ".") -> str:
+    """Run pytest for a Python project or target path.
+
+    Args:
+        path: File or directory path to pass to pytest.
+    """
+    try:
+        safe_target = safe_path(path)
+        return execute_shell(
+            f"python -m pytest {shlex.quote(str(safe_target))}",
+            safe_target,
+        )
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def run_npm_test(path: str = ".") -> str:
+    """Run npm test in a Node.js project directory.
+
+    Args:
+        path: Project directory containing package.json.
+    """
+    try:
+        safe_target = safe_path(path)
+        return execute_shell("npm test", safe_target)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def run_project_checks(path: str = ".") -> str:
+    """Run the most likely project-specific checks for a workspace path.
+
+    Args:
+        path: Project directory to inspect.
+    """
+    try:
+        safe_target = safe_path(path)
+
+        if not safe_target.exists():
+            return f"Path does not exist: {safe_target}"
+        if not safe_target.is_dir():
+            return f"Path is not a directory: {safe_target}"
+
+        if (safe_target / "pyproject.toml").exists() or (safe_target / "pytest.ini").exists() or (safe_target / "tests").exists():
+            return run_pytest(str(safe_target))
+
+        if (safe_target / "package.json").exists():
+            return run_npm_test(str(safe_target))
+
+        if (safe_target / "Cargo.toml").exists():
+            return execute_shell("cargo test", safe_target)
+
+        if (safe_target / "go.mod").exists():
+            return execute_shell("go test ./...", safe_target)
+
+        if (safe_target / "Makefile").exists():
+            make_test = execute_shell("make test", safe_target)
+            if "No rule to make target" not in make_test:
+                return make_test
+            return execute_shell("make", safe_target)
+
+        return python_syntax_check(str(safe_target))
+
+    except Exception as e:
+        return f"Error: {e}"
+
+
 TOOLS = {
     "list_files": list_files,
     "read_file": read_file,
@@ -674,6 +745,9 @@ TOOLS = {
     "run_make": run_make,
     "run_norminette": run_norminette,
     "python_syntax_check": python_syntax_check,
+    "run_pytest": run_pytest,
+    "run_npm_test": run_npm_test,
+    "run_project_checks": run_project_checks,
 }
 
 
@@ -691,4 +765,7 @@ TOOL_FUNCTIONS = [
     run_make,
     run_norminette,
     python_syntax_check,
+    run_pytest,
+    run_npm_test,
+    run_project_checks,
 ]

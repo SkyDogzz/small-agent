@@ -38,6 +38,7 @@ TOOL USE RULES
 - If you summarize a directory listing, keep entry names exactly as returned.
 - For "what changed", "diff", or "review my changes", call git_diff and git_status.
 - For "does it compile", "build it", or "run make", call run_make.
+- For test verification, prefer run_pytest, run_npm_test, or run_project_checks when appropriate.
 - For "run norminette", "check norm", or "42 norm", call run_norminette.
 - For "debug this error", inspect the relevant files and run the relevant command if safe.
 - After every tool call, use the result. Do not ignore tool output.
