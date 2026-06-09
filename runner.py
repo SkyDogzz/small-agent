@@ -2,7 +2,12 @@ import json
 
 from ollama import ResponseError, chat
 
-from config import MAX_TOOL_LOOPS, MODEL, SHOW_TOOL_CALLS
+from config import (
+    MAX_CONSOLE_TOOL_PREVIEW_CHARS,
+    MAX_TOOL_LOOPS,
+    MODEL,
+    SHOW_TOOL_CALLS,
+)
 from prompts import SYSTEM_PROMPT
 from tools import TOOL_FUNCTIONS, TOOLS, inspect_folder, read_file, truncate
 
@@ -149,7 +154,10 @@ def run_agent(user_prompt: str) -> str:
             )
 
             if SHOW_TOOL_CALLS:
-                print(f"[tool result] {truncate(str(result), 1000)}")
+                print(
+                    "[tool result] "
+                    f"{truncate(str(result), MAX_CONSOLE_TOOL_PREVIEW_CHARS)}"
+                )
 
             messages.append(
                 {
@@ -165,7 +173,9 @@ def run_agent(user_prompt: str) -> str:
             text.append(f"Tool: {item['tool']}")
             text.append(f"Args: {item['args']}")
             text.append("Result:")
-            text.append(item["result"][:4000])
+            text.append(
+                truncate(item["result"], MAX_CONSOLE_TOOL_PREVIEW_CHARS)
+            )
             text.append("")
         return "\n".join(text)
 

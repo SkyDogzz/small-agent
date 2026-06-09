@@ -1,3 +1,4 @@
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -64,6 +65,61 @@ def is_secret_like_path(path: Path) -> bool:
     return any(fragment in part for part in lowered_parts for fragment in suspicious_fragments)
 
 
+def workspace_relative_path(path: Path) -> str:
+    relative = path.relative_to(WORKSPACE)
+    relative_text = relative.as_posix()
+    return relative_text or "."
+
+
+def git_ignored_paths(paths: list[Path]) -> set[str] | None:
+    if not paths:
+        return set()
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(WORKSPACE), "check-ignore", "--stdin"],
+            input="\n".join(workspace_relative_path(path) for path in paths) + "\n",
+            text=True,
+            capture_output=True,
+            cwd=WORKSPACE,
+        )
+
+        if result.returncode not in {0, 1}:
+            return None
+
+        return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    except Exception:
+        return None
+
+
+def filter_git_ignored(paths: list[Path]) -> list[Path]:
+    ignored = git_ignored_paths(paths)
+    if ignored is None:
+        return paths
+
+    visible = []
+    for path in paths:
+        if workspace_relative_path(path) not in ignored:
+            visible.append(path)
+
+    return visible
+
+
+def iter_visible_files(root: Path) -> list[Path]:
+    if not root.exists() or not root.is_dir():
+        return []
+
+    candidates = []
+    for item in root.rglob("*"):
+        if not item.is_file():
+            continue
+        if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in item.parts):
+            continue
+        candidates.append(item)
+
+    return filter_git_ignored(candidates)
+
+
 def list_files(path: str = ".") -> str:
     """List files and directories in a directory.
 
@@ -78,10 +134,8 @@ def list_files(path: str = ".") -> str:
         if not p.is_dir():
             return f"Path is not a directory: {p}"
 
-        entries = sorted(
-            p.iterdir(),
-            key=lambda x: (not x.is_dir(), x.name.lower()),
-        )
+        entries = sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        entries = filter_git_ignored(entries)
 
         dir_count = sum(1 for entry in entries if entry.is_dir())
         file_count = len(entries) - dir_count
@@ -198,6 +252,7 @@ def inspect_folder(path: str = ".") -> str:
 
         output.append("Top-level entries:")
         entries = sorted(p.iterdir(), key=lambda x: x.name.lower())
+        entries = filter_git_ignored(entries)
 
         if not entries:
             output.append("- (empty directory)")
@@ -213,6 +268,9 @@ def inspect_folder(path: str = ".") -> str:
         for name in interesting_files:
             file_path = p / name
             if file_path.exists() and file_path.is_file():
+                if git_ignored_paths([file_path]) == {workspace_relative_path(file_path)}:
+                    continue
+
                 found_preview = True
                 output.append(f"\n--- {name} ---")
 
@@ -332,19 +390,46 @@ def grep_code(pattern: str, path: str = ".") -> str:
     """
     try:
         safe_target = safe_path(path)
-        quoted_pattern = shlex.quote(pattern)
-        quoted_path = shlex.quote(str(safe_target))
+        if not safe_target.exists():
+            return f"Path does not exist: {safe_target}"
 
-        command = (
-            "grep -RIn "
-            "--exclude-dir=.git "
-            "--exclude-dir=.venv "
-            "--exclude-dir=node_modules "
-            "--exclude-dir=__pycache__ "
-            f"{quoted_pattern} {quoted_path}"
-        )
+        if safe_target.is_file():
+            ignored = git_ignored_paths([safe_target])
+            if ignored == {workspace_relative_path(safe_target)}:
+                return f"No matches found for pattern: {pattern}"
 
-        return run_shell(command)
+        regex = re.compile(pattern)
+        matches = []
+
+        if safe_target.is_file():
+            candidates = [safe_target]
+        else:
+            candidates = iter_visible_files(safe_target)
+
+        for file_path in candidates:
+            try:
+                text = file_path.read_text(errors="replace")
+            except Exception:
+                continue
+
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if regex.search(line):
+                    matches.append(
+                        f"{file_path.relative_to(WORKSPACE)}:{lineno}:{line}"
+                    )
+                    if len(matches) >= 200:
+                        break
+
+            if len(matches) >= 200:
+                break
+
+        if not matches:
+            return f"No matches found for pattern: {pattern}"
+
+        if len(matches) >= 200:
+            matches.append("[Stopped after 200 matches.]")
+
+        return truncate("\n".join(matches))
 
     except Exception as e:
         return f"Error: {e}"
@@ -371,8 +456,10 @@ def find_files(name_pattern: str = "*", path: str = ".") -> str:
                 continue
             matches.append(item)
 
-            if len(matches) >= 200:
-                break
+        matches = filter_git_ignored(matches)
+
+        if len(matches) > 200:
+            matches = matches[:200]
 
         if not matches:
             return f"No files found matching pattern: {name_pattern}"
