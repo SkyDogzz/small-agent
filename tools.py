@@ -5,6 +5,23 @@ from pathlib import Path
 
 from config import MAX_FILE_READ_BYTES, MAX_TOOL_OUTPUT_CHARS, WORKSPACE
 
+LISTING_HIDDEN_NAMES = {
+    ".git",
+    ".venv",
+    ".codex",
+    ".agents",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+}
+
+LISTING_HIDDEN_FILES = {
+    ".DS_Store",
+    "Thumbs.db",
+}
+
 
 def truncate(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
     if len(text) <= limit:
@@ -113,11 +130,31 @@ def iter_visible_files(root: Path) -> list[Path]:
     for item in root.rglob("*"):
         if not item.is_file():
             continue
-        if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in item.parts):
+        if any(part in LISTING_HIDDEN_NAMES for part in item.parts):
+            continue
+        if item.name in LISTING_HIDDEN_FILES:
             continue
         candidates.append(item)
 
     return filter_git_ignored(candidates)
+
+
+def is_hidden_listing_entry(entry: Path) -> bool:
+    if entry.name in LISTING_HIDDEN_NAMES:
+        return True
+    if entry.name in LISTING_HIDDEN_FILES:
+        return True
+    if entry.name.startswith(".") and entry.name not in {".gitignore"}:
+        return True
+    return False
+
+
+def visible_listing_entries(entries: list[Path]) -> list[Path]:
+    visible = []
+    for entry in entries:
+        if not is_hidden_listing_entry(entry):
+            visible.append(entry)
+    return filter_git_ignored(visible)
 
 
 def list_files(path: str = ".") -> str:
@@ -135,7 +172,7 @@ def list_files(path: str = ".") -> str:
             return f"Path is not a directory: {p}"
 
         entries = sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
-        entries = filter_git_ignored(entries)
+        entries = visible_listing_entries(entries)
 
         dir_count = sum(1 for entry in entries if entry.is_dir())
         file_count = len(entries) - dir_count
@@ -252,7 +289,7 @@ def inspect_folder(path: str = ".") -> str:
 
         output.append("Top-level entries:")
         entries = sorted(p.iterdir(), key=lambda x: x.name.lower())
-        entries = filter_git_ignored(entries)
+        entries = visible_listing_entries(entries)
 
         if not entries:
             output.append("- (empty directory)")
@@ -268,7 +305,9 @@ def inspect_folder(path: str = ".") -> str:
         for name in interesting_files:
             file_path = p / name
             if file_path.exists() and file_path.is_file():
-                if git_ignored_paths([file_path]) == {workspace_relative_path(file_path)}:
+                if any(part in LISTING_HIDDEN_NAMES for part in file_path.parts):
+                    continue
+                if file_path.name in LISTING_HIDDEN_FILES:
                     continue
 
                 found_preview = True
@@ -452,11 +491,13 @@ def find_files(name_pattern: str = "*", path: str = ".") -> str:
 
         matches = []
         for item in p.rglob(name_pattern):
-            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in item.parts):
+            if any(part in LISTING_HIDDEN_NAMES for part in item.parts):
+                continue
+            if item.name in LISTING_HIDDEN_FILES:
                 continue
             matches.append(item)
 
-        matches = filter_git_ignored(matches)
+        matches = visible_listing_entries(matches)
 
         if len(matches) > 200:
             matches = matches[:200]
