@@ -45,5 +45,5 @@ python agent.py
 
 ## Notes
 
-- The default model is configured in [`agent.py`](./agent.py).
+- The default model is configured in [`config.py`](./config.py).
 - The agent only works inside the current workspace and is intended for local project inspection and edits.
