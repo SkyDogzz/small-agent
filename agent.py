@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from ollama import chat
+from ollama import ResponseError, chat
 from pathlib import Path
 import subprocess
 import shlex
@@ -660,6 +660,32 @@ def normalize_tool_args(args):
     return {}
 
 
+def fallback_project_summary() -> str:
+    """
+    Best-effort summary when the model or tool calling fails.
+    """
+    folder_summary = inspect_folder(".")
+    readme_summary = read_file("README.md")
+
+    return "\n".join(
+        [
+            "I hit an Ollama tool-call parsing error, so here is a local best-effort summary based on the workspace:",
+            "",
+            "What the project appears to be:",
+            "- A small local autonomous coding agent that uses `ollama`.",
+            "- `agent.py` is the main entry point and contains the tool loop, workspace safety checks, and local file/shell helpers.",
+            "- `run-agent.sh` activates `.venv` and starts `python agent.py`.",
+            "- `README.md` documents the setup and run steps.",
+            "",
+            "Workspace inspection:",
+            folder_summary,
+            "",
+            "README preview:",
+            readme_summary,
+        ]
+    )
+
+
 def run_agent(user_prompt: str) -> str:
     messages.append({"role": "user", "content": user_prompt})
 
@@ -667,12 +693,20 @@ def run_agent(user_prompt: str) -> str:
     last_tool_results = []
 
     for step in range(MAX_TOOL_LOOPS):
-        response = chat(
-            model=MODEL,
-            messages=messages,
-            tools=TOOL_FUNCTIONS,
-            stream=False,
-        )
+        try:
+            response = chat(
+                model=MODEL,
+                messages=messages,
+                tools=TOOL_FUNCTIONS,
+                stream=False,
+            )
+        except ResponseError as e:
+            error_text = str(e)
+
+            if "XML syntax error" in error_text:
+                return fallback_project_summary()
+
+            return f"Ollama error: {error_text}"
 
         msg = response.get("message", {})
         messages.append(msg)
