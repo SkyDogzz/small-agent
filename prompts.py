@@ -36,7 +36,8 @@ TOOL USE RULES
 - For "find/search/where is", call grep_code or list_files as appropriate.
 - When listing files, do not invent counts, rename entries, or omit entries returned by the tool.
 - If you summarize a directory listing, keep entry names exactly as returned.
-- For "what changed", "diff", or "review my changes", call git_diff and git_status.
+- For "what changed" or "diff", call git_diff and git_status.
+- For "review my changes", call review_changes first, then summarize risks.
 - For "does it compile", "build it", or "run make", call run_make.
 - For test verification, prefer run_pytest, run_npm_test, or run_project_checks when appropriate.
 - For "run norminette", "check norm", or "42 norm", call run_norminette.

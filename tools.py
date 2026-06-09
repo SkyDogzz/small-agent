@@ -532,6 +532,30 @@ def git_diff() -> str:
     return run_shell("git diff -- .")
 
 
+def review_changes() -> str:
+    """Collect git status and diff for a code review pass."""
+    status = git_status().strip()
+    diff = git_diff().strip()
+
+    lines = [
+        "Review context:",
+        "",
+        "Git status:",
+        status or "(no status output)",
+        "",
+        "Git diff:",
+        diff or "(no diff output)",
+        "",
+        "Review focus:",
+        "- correctness regressions",
+        "- missing or weak tests",
+        "- unsafe shell or file changes",
+        "- incomplete refactors",
+    ]
+
+    return truncate("\n".join(lines), 18_000)
+
+
 def grep_code(pattern: str, path: str = ".") -> str:
     """Search for a pattern in files using grep.
 
@@ -740,6 +764,7 @@ TOOLS = {
     "run_shell": run_shell,
     "git_status": git_status,
     "git_diff": git_diff,
+    "review_changes": review_changes,
     "grep_code": grep_code,
     "find_files": find_files,
     "run_make": run_make,
@@ -760,6 +785,7 @@ TOOL_FUNCTIONS = [
     run_shell,
     git_status,
     git_diff,
+    review_changes,
     grep_code,
     find_files,
     run_make,
