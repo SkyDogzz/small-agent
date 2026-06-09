@@ -18,6 +18,19 @@ messages = [
         "content": SYSTEM_PROMPT,
     }
 ]
+session_summary = ""
+
+SUMMARY_SYSTEM_PROMPT = """
+You maintain a short rolling summary for a local coding agent session.
+
+Rules:
+- Keep it factual and concise.
+- Only include verified information from the conversation.
+- Prefer bullets.
+- Mention the user goal, important files, decisions, constraints, and open questions.
+- Keep it under 8 bullets and avoid redundant wording.
+- If there is no useful context yet, return an empty string.
+""".strip()
 
 
 def normalize_tool_args(args):
@@ -40,6 +53,82 @@ def normalize_tool_args(args):
             return {}
 
     return {}
+
+
+def build_chat_messages() -> list[dict]:
+    payload = [messages[0]]
+
+    if session_summary.strip():
+        payload.append(
+            {
+                "role": "system",
+                "content": (
+                    "SESSION SUMMARY (informational context only):\n"
+                    f"{session_summary.strip()}"
+                ),
+            }
+        )
+
+    payload.extend(messages[1:])
+    return payload
+
+
+def render_message_excerpt(history: list[dict], limit: int = 16) -> str:
+    excerpt = history[-limit:]
+    lines = []
+
+    for item in excerpt:
+        role = item.get("role", "unknown")
+        name = item.get("name")
+        content = str(item.get("content", "")).strip()
+
+        header = role
+        if name:
+            header = f"{role}:{name}"
+
+        if len(content) > 700:
+            content = content[:700] + "…"
+
+        lines.append(f"{header}: {content}")
+
+    return "\n".join(lines)
+
+
+def update_session_summary() -> None:
+    global session_summary
+
+    history = messages[1:]
+    if not history:
+        session_summary = ""
+        return
+
+    summary_prompt = [
+        {
+            "role": "system",
+            "content": SUMMARY_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": (
+                "Current summary:\n"
+                f"{session_summary.strip() or '(none)'}\n\n"
+                "Recent conversation:\n"
+                f"{render_message_excerpt(history)}\n\n"
+                "Write the updated concise session summary."
+            ),
+        },
+    ]
+
+    try:
+        response = chat(
+            model=MODEL,
+            messages=summary_prompt,
+            stream=False,
+        )
+        summary_text = response.get("message", {}).get("content", "").strip()
+        session_summary = summary_text
+    except Exception:
+        pass
 
 
 def fallback_project_summary() -> str:
@@ -78,12 +167,13 @@ def run_agent(user_prompt: str) -> str:
     last_tool_results = []
     total_prompt_tokens = 0
     total_completion_tokens = 0
+    final_text = None
 
     for step in range(MAX_TOOL_LOOPS):
         try:
             response = chat(
                 model=MODEL,
-                messages=messages,
+                messages=build_chat_messages(),
                 tools=TOOL_FUNCTIONS,
                 stream=False,
             )
@@ -112,7 +202,8 @@ def run_agent(user_prompt: str) -> str:
 
         if not tool_calls:
             if content and content.strip():
-                return content.strip()
+                final_text = content.strip()
+                break
 
             if saw_tool_call and last_tool_results:
                 recovery_prompt = (
@@ -123,7 +214,8 @@ def run_agent(user_prompt: str) -> str:
                 messages.append({"role": "user", "content": recovery_prompt})
                 continue
 
-            return "[No response from model.]"
+            final_text = "[No response from model.]"
+            break
 
         saw_tool_call = True
 
@@ -167,6 +259,10 @@ def run_agent(user_prompt: str) -> str:
                 }
             )
 
+    if final_text is not None:
+        update_session_summary()
+        return final_text
+
     if last_tool_results:
         text = ["Tool loop stopped, but here are the latest tool results:\n"]
         for item in last_tool_results[-3:]:
@@ -177,12 +273,15 @@ def run_agent(user_prompt: str) -> str:
                 truncate(item["result"], MAX_CONSOLE_TOOL_PREVIEW_CHARS)
             )
             text.append("")
+        update_session_summary()
         return "\n".join(text)
 
+    update_session_summary()
     return "Stopped after too many tool calls."
 
 
 def clear_history() -> None:
+    global session_summary
     messages.clear()
     messages.append(
         {
@@ -190,3 +289,4 @@ def clear_history() -> None:
             "content": SYSTEM_PROMPT,
         }
     )
+    session_summary = ""
